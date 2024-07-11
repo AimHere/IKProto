@@ -1,5 +1,6 @@
 import argparse
 import math
+import numpy as np
 
 from zed_utilities import body_34_parts, body_34_tree, body_34_tpose, ForwardKinematics
 
@@ -25,6 +26,36 @@ class FKSolver:
             
         print(self.parents)
 
+    def untarget(self, keypoints, rotations, static = False):
+        new_positions = [Position.zero()] * len(self.bonelist)
+
+        def _recurse(bone_name, rot, pIdx):
+            cIdx = self.bonelist.index(bone_name)
+            if (pIdx < 0):
+                if (static):
+                    new_positions[cIdx] = Position.zero()
+                else:
+                    new_positions[cIdx] = keypoints[cIdx]
+                newrot = rot
+            else:
+                newrot = rot * rotations[pIdx]
+                new_positions[cIdx] = new_positions[pIdx] + newrot.inv().apply(keypoints[cIdx] - keypoints[pIdx])
+            if (bone_name in self.bonetree):
+                for cname in self.bonetree[bone_name]:
+                    _recurse(cname, newrot, cIdx)
+                    
+        _recurse("PELVIS", Quaternion.zero(), -1)
+
+        if (static):
+            self.rootpos = Position([0, 0, 0])
+        return new_positions
+
+    def recalc_tpose(self, keypoints, rotations):
+        new_pos = self.untarget(keypoints, rotations)
+        print([str(p) for p in new_pos])
+        print("--")
+        print([str(p) for p in self.tpose])
+        
     def bone_path(self, b_from, b_to):
         print("Finding %d->%d"%(b_from, b_to))
         
@@ -77,20 +108,35 @@ class FKSolver:
         return q
 
 
-    def CCD_pass(self):
-        pass
-    
+    def CCD_pass(self, effector, bone_list, pose):
+        bone_positions = [pose[i] for i in bone_list]
+        rots = []
+        
+        for pIdx in range(len(bone_positions) - 2, -1, -1):            
+            q = self.get_rotation(effector, bone_positions[-1], bone_positions[pIdx])
+            rots.append(q)
+            # Update the bone positions 
+            for uIdx in range(pIdx + 1, len(bone_positions)):
+                bone_positions[uIdx] = bone_positions[pIdx] + q.apply(bone_positions[uIdx] - bone_positions[pIdx])
+
+            for i, bpos in enumerate(bone_positions):
+                print("Pass: %d, bone_positions: %d: %s"%(pIdx, i, bpos))
+
+        return rots
+
+
+            
     def CCD_run(self, effector, initial_pose, effector_bone, fixed_bone, max_iters = 100, threshold = None):
         # Go through the bones getting the rotations and applying them to get the updated position of the
         # extreme bone
 
         # Once you have the list of rotations, apply them all to the skel and get the new pose positions
         # Repeat until the threshold or max iters condition is hit
-        
-        bone_list = selfbone_path(effector_bone, fixed_bone)
 
+        new_rots = self.CCD_pass(effector, self.bone_path(effector_bone, fixed_bone), initial_pose)
         
-        
+        print([str(r) for r in new_rots])
+
     def propagate(self, rotations, initial_position):
         keyvector = [Position([0, 0, 0]) for i in range(34)]
         
@@ -106,7 +152,6 @@ class FKSolver:
                 # print("Old: %d, Nrot:"%cIdx, n_rot)
                 # print("Old: %d, NewPos: "%cIdx, new_pos)
 
-
             keyvector[cIdx] = new_pos
             for child in self.bonetree[bone]:
                 _recurse(child, n_rot, cIdx)
@@ -116,11 +161,6 @@ class FKSolver:
         _recurse(self.root, initial_rot, -1)
         
         return keyvector
-
-    
-
-
-
 
 class CCD:
     def __init__(self, skeleton, constraints = None):
@@ -145,20 +185,33 @@ import argparse
 
 parser = argparse.ArgumentParser()
 
-parser.add_argument('f', type = int)
-parser.add_argument('to', type = int)
+# parser.add_argument('f', type = int)
+# parser.add_argument('to', type = int)
+
+parser.add_argument('frame', type = int)
+parser.add_argument('pivot_bone', type = int)
+parser.add_argument('extreme_bone', type = int)
+parser.add_argument('effector', type = float, nargs = 3)
 
 args = parser.parse_args()
 
-fk = FKSolver(body_34_parts, body_34_tree, 'PELVIS', body_34_tpose)
+effector = Position(args.effector)
 
-b_path = fk.bone_path(args.f, args.to)
-for i in b_path:
-    print("%02d: %s"%(i, body_34_parts[i]))
+pose_rots = np.load("S9_posing_1_zed34_test.npz", allow_pickle = True)['quats'][args.frame, :, :]
+pose_kps = np.load("S9_posing_1_zed34_test.npz", allow_pickle = True)['keypoints'][args.frame, :, :]
+
+fkn = ForwardKinematics(body_34_parts, body_34_tree, 'PELVIS', body_34_tpose)
+
+pquats = [Quaternion(pose_rots[i]) for i in range(pose_rots.shape[0])]
+ppos = [Position(pose_kps[i]) for i in range(pose_kps.shape[0])]
+
+fksolver = FKSolver(body_34_parts, body_34_tree, 'PELVIS', body_34_tpose)
+npose = fksolver.propagate(pquats, Position([0, 0, 0]))
+
+print("Pivot from %s(%d) to extremity %s(%d)"%(body_34_parts[args.pivot_bone], args.pivot_bone, body_34_parts[args.extreme_bone], args.extreme_bone))
+
+#fksolver.CCD_run(effector, npose, args.extreme_bone, args.pivot_bone)
+
+fksolver.recalc_tpose(ppos, pquats)
 
 
-pivot = Position([0, 0, 0])
-extreme = Position([0, 3, 4])
-effector = Position([0, 0, -5])
-
-print(fk.get_rotation(effector, extreme, pivot))

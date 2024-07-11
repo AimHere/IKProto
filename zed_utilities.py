@@ -385,7 +385,8 @@ class Quaternion:
         ints = [round(32767 * f) for f in qq]
         return Quantized_Quaternion(ints)
 
-
+    def inv(self):
+        return Quaternion(self.rot.inv().as_quat())
 
     
 class Euler:
@@ -477,7 +478,8 @@ class Position:
         else:
             return self.scale(1 / mg)
 
-        
+    def zero():
+        return Position([0, 0, 0])
 
         
 class Transform:
@@ -629,6 +631,10 @@ class ForwardKinematics:
         self.bonelist = bonelist
         self.root = rootbone
         self.tpose = [Position(p) for p in tpose]
+
+    def get_tpose(self, keypoints, rotations):
+        # Recalculate the tpose based on a set of quaternions and keypoints
+        pass
         
     def propagate(self, rotations, initial_position):
         keyvector = [Position([0, 0, 0]) for i in range(34)]
@@ -644,7 +650,6 @@ class ForwardKinematics:
                 new_pos = keyvector[pIdx] + n_rot.apply(self.tpose[cIdx] - self.tpose[pIdx])
                 # print("Old: %d, Nrot:"%cIdx, n_rot)
                 # print("Old: %d, NewPos: "%cIdx, new_pos)
-
 
             keyvector[cIdx] = new_pos
             for child in self.bonetree[bone]:
