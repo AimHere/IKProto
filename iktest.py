@@ -2,12 +2,115 @@ import argparse
 import math
 import numpy as np
 
+
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+#import pandas as pd
+
 from zed_utilities import body_34_parts, body_34_tree, body_34_tpose, ForwardKinematics
 
 from zed_utilities import Quaternion, Position
 
 zero_pose = [Quaternion([0, 0, 0, 1]) for u in range(34)]
 
+class Render:
+    def __init__(self, skelList, parents, nodots = False, lineplot = True,
+                 scale = 1.0,
+                 elev = 90.0, azim = 0.0, roll = 0.0,
+                 effector = None,
+                 static_bone = None,
+                 extreme_bone = None
+                 ):
+
+        self.skeletons = skelList
+        self.parents = parents
+        
+        self.nodots = nodots
+        self.lineplot = lineplot
+
+        self.scale = scale
+        
+        self.elev = elev
+        self.azim = azim
+        self.roll = roll
+        
+        self.ax = []
+        self.fig = plt.figure()
+
+        self.effector = effector
+        self.static_bone = static_bone        
+        self.extreme_bone = extreme_bone
+
+        self.dotpoints = []
+        self.lines = []
+        
+        for idx, skel in enumerate(self.skeletons):
+            self.lines.append([])
+            self.ax.append(self.fig.add_subplot(1, len(self.skeletons), idx + 1, projection = '3d'))
+
+            self.ax[idx].set_xlim(-self.scale, self.scale)
+            self.ax[idx].set_ylim(-self.scale, self.scale)
+            self.ax[idx].set_zlim(-self.scale, self.scale)            
+
+            self.ax[idx].view_init(elev = self.elev, azim = self.azim, roll = self.roll, vertical_axis = 'y')
+
+            if (not self.nodots):                
+
+
+                bluelist = [i for i in range(skel.shape[0]) if (i != self.static_bone and i != self.extreme_bone)]
+
+                self.dotpoints.append(self.ax[idx].scatter(skel[bluelist, 0], skel[bluelist, 1], skel[bluelist, 2], color = 'blue'))
+                
+                if (self.extreme_bone):
+                    eb = self.extreme_bone
+                    print("Greening bone %d"%eb)
+                    self.dotpoints.append(self.ax[idx].scatter(skel[eb:eb + 1, 0],
+                                                               skel[eb:eb + 1, 1],
+                                                               skel[eb:eb + 1, 2], color = "green"))
+
+                if (self.static_bone):
+
+                    sb = self.static_bone
+                    print("Reddening bone %d"%sb)                    
+                    self.dotpoints.append(self.ax[idx].scatter(skel[sb:sb + 1, 0],
+                                                               skel[sb:sb + 1, 1],
+                                                               skel[sb:sb + 1, 2], color = "red"))
+
+ 
+                if (self.effector):
+
+                    ef = np.array(self.effector).reshape([3, 1])
+
+                    self.dotpoints.append(self.ax[idx].scatter(ef[0],
+                                                               ef[1],
+                                                               ef[2],
+                                                               color = 'magenta',
+                                                               s = 50))
+                else:
+                    print("No effector")
+            if (self.lineplot):
+                linex, liney, linez = self.build_lines(skel)
+                for l in range(0, len(linex)):
+                    self.ax[idx].plot(linex[l:l+1], liney[l:l+1], linez[l:l+1])
+
+                
+        plt.show()
+
+    def build_lines(self, skel):
+        linex = []
+        liney = []
+        linez = []
+        for cIdx, pIdx in enumerate(self.parents):
+
+
+            if (pIdx >= 0):
+                print("%s(%d)->%s(%d)"%(body_34_parts[pIdx], pIdx, body_34_parts[cIdx], cIdx))                
+                linex.append([skel[cIdx, 0], skel[pIdx, 0]])
+                liney.append([skel[cIdx, 1], skel[pIdx, 1]])                
+                linez.append([skel[cIdx, 2], skel[pIdx, 2]])
+        return [linex, liney, linez]
+                    
+                                          
 class FKSolver:
 
     def __init__(self, bonelist, bonetree, rootbone, tpose, rootpos = Position([0,0,0])):
@@ -55,6 +158,8 @@ class FKSolver:
         print([str(p) for p in new_pos])
         print("--")
         print([str(p) for p in self.tpose])
+        return new_pos
+
         
     def bone_path(self, b_from, b_to):
         print("Finding %d->%d"%(b_from, b_to))
@@ -121,7 +226,7 @@ class FKSolver:
 
             for i, bpos in enumerate(bone_positions):
                 print("Pass: %d, bone_positions: %d: %s"%(pIdx, i, bpos))
-
+            
         return rots
 
 
@@ -188,11 +293,19 @@ parser = argparse.ArgumentParser()
 # parser.add_argument('f', type = int)
 # parser.add_argument('to', type = int)
 
+parser.add_argument("--nodots", action = 'store_true', help = "Line only, no dots")
+parser.add_argument("--save", type = str, help = "Save to file")
+parser.add_argument("--elev", type = float, help = "Elevation", default = 0)
+parser.add_argument("--azim", type = float, help = "Azimuth", default = 0)
+parser.add_argument("--roll", type = float, help = "Roll", default = 0)
+parser.add_argument("--lineplot", action = 'store_true', help = "Draw a skel")
+parser.add_argument("--scale", type = int, help = "Scaling factor", default = 1000.0)
+
 parser.add_argument('frame', type = int)
 parser.add_argument('pivot_bone', type = int)
 parser.add_argument('extreme_bone', type = int)
 parser.add_argument('effector', type = float, nargs = 3)
-
+    
 args = parser.parse_args()
 
 effector = Position(args.effector)
@@ -212,6 +325,20 @@ print("Pivot from %s(%d) to extremity %s(%d)"%(body_34_parts[args.pivot_bone], a
 
 #fksolver.CCD_run(effector, npose, args.extreme_bone, args.pivot_bone)
 
-fksolver.recalc_tpose(ppos, pquats)
 
+tpose = np.array(body_34_tpose)
+apose = np.array([p.np() for p in ppos])
+npose = np.array([p.np() for p in fksolver.recalc_tpose(ppos, pquats)])
+
+parentslist = fksolver.parents
+
+
+renderer = Render([tpose, apose, npose], parentslist, nodots = args.nodots, lineplot = args.lineplot,
+                  elev = args.elev,
+                  azim = args.azim,
+                  roll = args.roll,
+                  scale = args.scale,
+                  static_bone = args.pivot_bone,
+                  extreme_bone = args.extreme_bone,
+                  effector = args.effector)
 
