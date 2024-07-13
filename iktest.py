@@ -17,6 +17,7 @@ class Render:
     def __init__(self, skelList, parents, nodots = False, lineplot = True,
                  scale = 1.0,
                  elev = 90.0, azim = 0.0, roll = 0.0,
+                 figsize = (1600, 800),
                  effector = None,
                  static_bone = None,
                  extreme_bone = None
@@ -36,6 +37,8 @@ class Render:
         
         self.ax = []
         self.fig = plt.figure()
+        self.fig.set_figwidth(figsize[0] / self.fig.get_dpi())
+        self.fig.set_figheight(figsize[1] / self.fig.get_dpi())        
 
         self.effector = effector
         self.static_bone = static_bone        
@@ -55,15 +58,13 @@ class Render:
             self.ax[idx].view_init(elev = self.elev, azim = self.azim, roll = self.roll, vertical_axis = 'y')
 
             if (not self.nodots):                
-
-
                 bluelist = [i for i in range(skel.shape[0]) if (i != self.static_bone and i != self.extreme_bone)]
 
                 self.dotpoints.append(self.ax[idx].scatter(skel[bluelist, 0], skel[bluelist, 1], skel[bluelist, 2], color = 'blue'))
                 
                 if (self.extreme_bone):
                     eb = self.extreme_bone
-                    print("Greening bone %d"%eb)
+                    print("Greening Extreme bone %d"%eb)
                     self.dotpoints.append(self.ax[idx].scatter(skel[eb:eb + 1, 0],
                                                                skel[eb:eb + 1, 1],
                                                                skel[eb:eb + 1, 2], color = "green"))
@@ -71,7 +72,7 @@ class Render:
                 if (self.static_bone):
 
                     sb = self.static_bone
-                    print("Reddening bone %d"%sb)                    
+                    print("Reddening Pivot bone %d"%sb)                    
                     self.dotpoints.append(self.ax[idx].scatter(skel[sb:sb + 1, 0],
                                                                skel[sb:sb + 1, 1],
                                                                skel[sb:sb + 1, 2], color = "red"))
@@ -90,9 +91,9 @@ class Render:
                     print("No effector")
             if (self.lineplot):
                 linex, liney, linez = self.build_lines(skel)
-                for l in range(0, len(linex)):
-                    self.ax[idx].plot(linex[l:l+1], liney[l:l+1], linez[l:l+1])
 
+                for l in range(0, len(linex)):
+                    self.ax[idx].plot(linex[l], liney[l], linez[l])                    
                 
         plt.show()
 
@@ -104,7 +105,6 @@ class Render:
 
 
             if (pIdx >= 0):
-                print("%s(%d)->%s(%d)"%(body_34_parts[pIdx], pIdx, body_34_parts[cIdx], cIdx))                
                 linex.append([skel[cIdx, 0], skel[pIdx, 0]])
                 liney.append([skel[cIdx, 1], skel[pIdx, 1]])                
                 linez.append([skel[cIdx, 2], skel[pIdx, 2]])
@@ -155,14 +155,9 @@ class FKSolver:
 
     def recalc_tpose(self, keypoints, rotations):
         new_pos = self.untarget(keypoints, rotations)
-        print([str(p) for p in new_pos])
-        print("--")
-        print([str(p) for p in self.tpose])
         return new_pos
-
         
     def bone_path(self, b_from, b_to):
-        print("Finding %d->%d"%(b_from, b_to))
         
         # Return the list of bones from the 'to' bone to the 'from' bone
         bone_path = [b_to]
@@ -213,34 +208,75 @@ class FKSolver:
         return q
 
 
-    def CCD_pass(self, effector, bone_list, pose):
+    def CCD_pass(self, effector, bone_list, pose, old_rotations):
         bone_positions = [pose[i] for i in bone_list]
-        rots = []
+
+        rots = [Quaternion.zero() for i in bone_positions]
         
         for pIdx in range(len(bone_positions) - 2, -1, -1):            
             q = self.get_rotation(effector, bone_positions[-1], bone_positions[pIdx])
-            rots.append(q)
+            if (pIdx == len(bone_positions) - 2):
+                rots[pIdx] = q
+            else:
+                rots[pIdx] = q * rots[pIdx + 1]
+                
             # Update the bone positions 
             for uIdx in range(pIdx + 1, len(bone_positions)):
                 bone_positions[uIdx] = bone_positions[pIdx] + q.apply(bone_positions[uIdx] - bone_positions[pIdx])
 
-            for i, bpos in enumerate(bone_positions):
-                print("Pass: %d, bone_positions: %d: %s"%(pIdx, i, bpos))
+            # for i, bpos in enumerate(bone_positions):
+            #     print("Pass: %d, bone_positions: %d: %s"%(pIdx, i, bpos))
+        print("Bone list is ", [b for b in bone_list])
+        for i, b in enumerate(bone_list):
+            print("%d: %d (%s): %s -> %s"%(i, b, self.bonelist[b],
+                                           str(pose[b]),
+                                           str(bone_positions[i])))
+        print("--")
+        # print("Original Bone track positions: ", [str(pose[i]) for i in bone_list])        
+        # print("Recalced Bone track positions: ", [str(p) for p in bone_positions])
             
-        return rots
+        new_rotations = old_rotations.copy()
 
-
+        # Rotations are cumulative 
+        for i, bp in enumerate(rots):
+            # The bones here are being applied in the wrong order
+            bu = bone_list[i]
+            print("Adding rotation %s to bone %d(%s)"%(str(bp), bu, str(self.bonelist[bu])))
+            new_rotations[bu] = bp * new_rotations[bu]
+                
+        return new_rotations, old_rotations
             
-    def CCD_run(self, effector, initial_pose, effector_bone, fixed_bone, max_iters = 100, threshold = None):
+    def CCD_run(self, effector, initial_pose, initial_rots, effector_bone, fixed_bone, max_iters = 100, threshold = None):
         # Go through the bones getting the rotations and applying them to get the updated position of the
         # extreme bone
 
         # Once you have the list of rotations, apply them all to the skel and get the new pose positions
         # Repeat until the threshold or max iters condition is hit
 
-        new_rots = self.CCD_pass(effector, self.bone_path(effector_bone, fixed_bone), initial_pose)
+
+
+
+
+
+
+
+
+
+
+
+
+
+        bone_path_ = self.bone_path(fixed_bone, effector_bone)
         
-        print([str(r) for r in new_rots])
+        bone_path = [b for b in reversed(bone_path_)]
+        
+        print("--")
+        print("Rev Bone path is ", [b for b in bone_path_])        
+        print("Bone path is ", [b for b in bone_path])
+        
+        new_rots, old_rots = self.CCD_pass(effector, bone_path, initial_pose, initial_rots)
+        
+        return new_rots, old_rots
 
     def propagate(self, rotations, initial_position):
         keyvector = [Position([0, 0, 0]) for i in range(34)]
@@ -300,6 +336,7 @@ parser.add_argument("--azim", type = float, help = "Azimuth", default = 0)
 parser.add_argument("--roll", type = float, help = "Roll", default = 0)
 parser.add_argument("--lineplot", action = 'store_true', help = "Draw a skel")
 parser.add_argument("--scale", type = int, help = "Scaling factor", default = 1000.0)
+parser.add_argument("--figsize", type = int, nargs = 2, help = "Figure size in pixels", default = (1600, 800))
 
 parser.add_argument('frame', type = int)
 parser.add_argument('pivot_bone', type = int)
@@ -323,20 +360,31 @@ npose = fksolver.propagate(pquats, Position([0, 0, 0]))
 
 print("Pivot from %s(%d) to extremity %s(%d)"%(body_34_parts[args.pivot_bone], args.pivot_bone, body_34_parts[args.extreme_bone], args.extreme_bone))
 
-#fksolver.CCD_run(effector, npose, args.extreme_bone, args.pivot_bone)
-
-
 tpose = np.array(body_34_tpose)
 apose = np.array([p.np() for p in ppos])
-npose = np.array([p.np() for p in fksolver.recalc_tpose(ppos, pquats)])
+#npose = np.array([p.np() for p in fksolver.recalc_tpose(ppos, pquats)])
+
+runresults, prior_results = fksolver.CCD_run(effector, npose, pquats, args.extreme_bone, args.pivot_bone)
+pass1_pose = np.array([p.np() for p in fkn.propagate(runresults, Position.zero())])
+old_pose = np.array([p.np() for p in fkn.propagate(prior_results, Position.zero())])
+
+
+for idx, pr in enumerate(prior_results):
+    nr = runresults[idx]
+    print("Rot: %s: %s->%s"%(body_34_parts[idx], str(pr), str(nr)))
+print("Recalced skel extreme bone pos: %s"%str(pass1_pose[args.extreme_bone]))
+print("Recalced skel pivot bone pos: %s"%str(pass1_pose[args.pivot_bone]))
+
+print("New Result size: %d"%len(runresults))
+
 
 parentslist = fksolver.parents
 
-
-renderer = Render([tpose, apose, npose], parentslist, nodots = args.nodots, lineplot = args.lineplot,
+renderer = Render([apose, old_pose, pass1_pose], parentslist, nodots = args.nodots, lineplot = args.lineplot,
                   elev = args.elev,
                   azim = args.azim,
                   roll = args.roll,
+                  figsize = args.figsize,
                   scale = args.scale,
                   static_bone = args.pivot_bone,
                   extreme_bone = args.extreme_bone,

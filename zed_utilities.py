@@ -1,5 +1,5 @@
 import numpy as np
-import torch
+
 import argparse
 import math
 
@@ -7,8 +7,12 @@ import argparse
 
 from scipy.spatial.transform import Rotation
 
-import torch
-
+try: 
+    import torch
+    torchfound = True
+except(ModuleNotFoundError):
+    torchfound = False
+    
 body_34_parts = [
     "PELVIS",
     "NAVALSPINE",
@@ -363,9 +367,9 @@ class Quaternion:
         q = self.rot.as_quat()
         return (sep.join([str(i) for i in q]))
     
-    def __str__(self):
+    def __str__(self, formatstr = '%f'):
         q = self.rot.as_quat()
-        return (" ".join([str(i) for i in q]))
+        return (" ".join([formatstr%i for i in q]))
 
     def apply(self, x):
         return Position(self.rot.apply([x.x, x.y, x.z]))
@@ -662,44 +666,45 @@ class ForwardKinematics:
         return keyvector
 
 
-class ForwardKinematics_Torch:
+if (torchfound):
+    class ForwardKinematics_Torch:
 
-    def __init__(self, bonelist, bonetree, rootbone, tpose, rootpose = torch.tensor([0, 0, 0])):
-        self.bonelist = bonelist
-        self.bonetree = bonetree
-        self.root = rootbone
-        self.tpose = torch.tensor(tpose).cuda()
+        def __init__(self, bonelist, bonetree, rootbone, tpose, rootpose = torch.tensor([0, 0, 0])):
+            self.bonelist = bonelist
+            self.bonetree = bonetree
+            self.root = rootbone
+            self.tpose = torch.tensor(tpose).cuda()
 
 
-    def propagate(self, rotations, initial_position = None):
+        def propagate(self, rotations, initial_position = None):
 
-        if (initial_position):
-            ipos = initial_position
-        else:
-            ipos = torch.zeros([3])
-
-        key_tensor = torch.zeros([rotations.shape[0], rotations.shape[1], rotations.shape[2], 3]).cuda()
-        def _recurse(parentbone, cur_rot, pIdx):
-
-            cIdx = self.bonelist.index(parentbone)
-
-            if pIdx < 0:
-                new_rot = cur_rot.clone()
-                new_pos = ipos.clone()
+            if (initial_position):
+                ipos = initial_position
             else:
-                new_rot = batch_quat_multiply(cur_rot, rotations[:, :, pIdx:pIdx + 1, :])
-                brv = batch_rotate_vector(new_rot, pIdx, self.tpose[cIdx] - self.tpose[pIdx])
-                new_pos = key_tensor[:, :, pIdx:pIdx + 1, :] + brv
+                ipos = torch.zeros([3])
 
-            key_tensor[:, :, cIdx:cIdx + 1, :] = new_pos
+            key_tensor = torch.zeros([rotations.shape[0], rotations.shape[1], rotations.shape[2], 3]).cuda()
+            def _recurse(parentbone, cur_rot, pIdx):
 
-            for child in self.bonetree[parentbone]:
-                _recurse(child, new_rot, cIdx)
+                cIdx = self.bonelist.index(parentbone)
 
-        iidx = self.bonelist.index(self.root)
-        initial_rot = rotations[:, :, iidx:iidx + 1, :]
-        _recurse(self.root, initial_rot, -1)
-        return key_tensor
+                if pIdx < 0:
+                    new_rot = cur_rot.clone()
+                    new_pos = ipos.clone()
+                else:
+                    new_rot = batch_quat_multiply(cur_rot, rotations[:, :, pIdx:pIdx + 1, :])
+                    brv = batch_rotate_vector(new_rot, pIdx, self.tpose[cIdx] - self.tpose[pIdx])
+                    new_pos = key_tensor[:, :, pIdx:pIdx + 1, :] + brv
+
+                key_tensor[:, :, cIdx:cIdx + 1, :] = new_pos
+
+                for child in self.bonetree[parentbone]:
+                    _recurse(child, new_rot, cIdx)
+
+            iidx = self.bonelist.index(self.root)
+            initial_rot = rotations[:, :, iidx:iidx + 1, :]
+            _recurse(self.root, initial_rot, -1)
+            return key_tensor
         
 
 def normalize(v):
@@ -766,7 +771,9 @@ class PointsToRotations:
 
 
 fk = ForwardKinematics(body_34_parts, body_34_tree, "PELVIS", body_34_tpose)
-fktorch = ForwardKinematics_Torch(body_34_parts, body_34_tree, "PELVIS", body_34_tpose)
+
+if (torchfound):
+    fktorch = ForwardKinematics_Torch(body_34_parts, body_34_tree, "PELVIS", body_34_tpose)
 
 if (False):
     test_quats, test_kps, test_quant_quats = [tfdata[i] for i in ['quats', 'keypoints', 'quantized_quats']]

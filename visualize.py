@@ -194,6 +194,7 @@ class Animation:
     def drawlines(self, aidx, frame):
         linex, liney, linez = self.animdata[aidx].build_lines(frame)
         for idx in range(len(linex)):
+            print("Linex shape: ", linex.shape)
             self.animlines[aidx].append(self.ax[aidx].plot(linex[idx], liney[idx], linez[idx]))
 
     def update_plot(self, frame):
