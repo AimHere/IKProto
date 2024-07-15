@@ -215,6 +215,7 @@ class FKSolver:
         
         for pIdx in range(len(bone_positions) - 2, -1, -1):            
             q = self.get_rotation(effector, bone_positions[-1], bone_positions[pIdx])
+            print("Got rotation for bone %d(%s): %s"%(bone_list[pIdx], self.bonelist[bone_list[pIdx]], q))
             if (pIdx == len(bone_positions) - 2):
                 rots[pIdx] = q
             else:
@@ -222,15 +223,34 @@ class FKSolver:
                 
             # Update the bone positions 
             for uIdx in range(pIdx + 1, len(bone_positions)):
-                bone_positions[uIdx] = bone_positions[pIdx] + q.apply(bone_positions[uIdx] - bone_positions[pIdx])
 
-            # for i, bpos in enumerate(bone_positions):
+                print("Initial Bone Pos: %s -> %s"%(bone_positions[uIdx], bone_positions[pIdx]))
+                print("Initial Rotation: %s"%old_rotations[pIdx])
+                print("Additional Rotation: %s"%q)
+                print("Full rotation: %s"%(q * old_rotations[pIdx]))
+
+                
+                bone_positions[uIdx] = bone_positions[pIdx] + q.apply(bone_positions[uIdx] - bone_positions[pIdx])
+                # print("Bone pos update: %d: %s + Rot [%s] * (%s - %s) [%s] = %s"%
+                #       (uIdx,
+                #        bone_positions[pIdx],
+                #        q,
+                #        pose[bone_list[uIdx]],
+                #        pose[bone_list[pIdx]],
+                #        pose[bone_list[uIdx]] - pose[bone_list[pIdx]],                       
+                #        bone_positions[uIdx]))
+
+                
+
+                
+                # for i, bpos in enumerate(bone_positions):
             #     print("Pass: %d, bone_positions: %d: %s"%(pIdx, i, bpos))
         print("Bone list is ", [b for b in bone_list])
         for i, b in enumerate(bone_list):
-            print("%d: %d (%s): %s -> %s"%(i, b, self.bonelist[b],
-                                           str(pose[b]),
-                                           str(bone_positions[i])))
+            print("%d: %d (%s): %s->%s"%(i, b,
+                                         self.bonelist[b],
+                                         str(pose[b]),
+                                         str(bone_positions[i])))
         print("--")
         # print("Original Bone track positions: ", [str(pose[i]) for i in bone_list])        
         # print("Recalced Bone track positions: ", [str(p) for p in bone_positions])
@@ -241,7 +261,7 @@ class FKSolver:
         for i, bp in enumerate(rots):
             # The bones here are being applied in the wrong order
             bu = bone_list[i]
-            print("Adding rotation %s to bone %d(%s)"%(str(bp), bu, str(self.bonelist[bu])))
+            print("Adding rotation %s to bone %d(%s): %s"%(str(bp), bu, str(self.bonelist[bu]), new_rotations[bu]))
             new_rotations[bu] = bp * new_rotations[bu]
                 
         return new_rotations, old_rotations
@@ -252,19 +272,6 @@ class FKSolver:
 
         # Once you have the list of rotations, apply them all to the skel and get the new pose positions
         # Repeat until the threshold or max iters condition is hit
-
-
-
-
-
-
-
-
-
-
-
-
-
 
         bone_path_ = self.bone_path(fixed_bone, effector_bone)
         
@@ -371,10 +378,10 @@ old_pose = np.array([p.np() for p in fkn.propagate(prior_results, Position.zero(
 
 for idx, pr in enumerate(prior_results):
     nr = runresults[idx]
-    print("Rot: %s: %s->%s"%(body_34_parts[idx], str(pr), str(nr)))
-print("Recalced skel extreme bone pos: %s"%str(pass1_pose[args.extreme_bone]))
-print("Recalced skel pivot bone pos: %s"%str(pass1_pose[args.pivot_bone]))
+    print("Rot: %s:\t%s\t->\t%s"%(body_34_parts[idx], str(pr), str(nr)))
 
+print("Recalced skel pivot bone pos: %s -> %s"%(npose[args.pivot_bone], str(pass1_pose[args.pivot_bone])))
+print("Recalced skel extreme bone pos: %s -> %s"%(npose[args.extreme_bone], str(pass1_pose[args.extreme_bone])))
 print("New Result size: %d"%len(runresults))
 
 
