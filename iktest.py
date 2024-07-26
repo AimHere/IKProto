@@ -176,7 +176,7 @@ class FKSolver:
             
         return bone_path
 
-    def get_rotation(self, effector, effect_pos, pivot_pos):
+    def get_rotation(self, effector, effect_pos, pivot_pos, cum_rot = None):
         # Find the angle from rotating r_joint that minimizes the distance between the effector and
         # the position of e_joint
 
@@ -188,12 +188,17 @@ class FKSolver:
 
 
         # First, find the quaternion that rotates between two given vectors
-
+        
+        if (cum_rot is None):
+            cum_rot = Quaternion.zero()
+        
         if (effector == effect_pos):
             return Quaternion([0, 0, 0, 1]) # We're already there
 
-        target_vec = (effector - pivot_pos).norm()
-        cur_vec = (effect_pos - pivot_pos).norm()
+        print("Unsetting old rotation: %s"%cum_rot)
+        
+        target_vec = cum_rot.inv().apply(effector - pivot_pos).norm()
+        cur_vec = cum_rot.inv().apply(effect_pos - pivot_pos).norm()
 
         axis_raw = cur_vec.cross(target_vec)
         angle = math.atan2(axis_raw.mag(), target_vec.dot(cur_vec))
@@ -208,14 +213,49 @@ class FKSolver:
         return q
 
 
+    def cum_rotations(self, rotations, initial_position):
+        #keyvector = [Position([0, 0, 0]) for i in range(34)]
+        cum_rots = [Quaternion([0,0,0,1]) for i in range(34)]
+                    
+        def _recurse(bone, c_rot, pIdx):
+            cIdx = self.bonelist.index(bone)
+
+            if (pIdx < 0):
+                n_rot = c_rot
+                #new_pos = initial_position
+            else:
+                n_rot = c_rot * rotations[pIdx]
+                #new_pos = keyvector[pIdx] + n_rot.apply(self.tpose[cIdx] - self.tpose[pIdx])
+            cum_rots[cIdx] = n_rot
+            #keyvector[cIdx] = new_pos
+            for child in self.bonetree[bone]:
+                _recurse(child, n_rot, cIdx)
+                
+        initial_rot = rotations[self.bonelist.index(self.root)]
+
+        _recurse(self.root, initial_rot, -1)
+        
+        return cum_rots
+
     def CCD_pass(self, effector, bone_list, pose, old_rotations):
         bone_positions = [pose[i] for i in bone_list]
 
         rots = [Quaternion.zero() for i in bone_positions]
-        
-        for pIdx in range(len(bone_positions) - 2, -1, -1):            
-            q = self.get_rotation(effector, bone_positions[-1], bone_positions[pIdx])
+
+        cum_rots = self.cum_rotations(old_rotations, Position([0,0,0]))
+        for i,c in enumerate(cum_rots):
+            print("Cumulative: %d: %s"%(i, c))
+
+        print("Initial bone pos: ", [str(p) for p in bone_positions])
+            
+        for pIdx in range(len(bone_positions) - 2, -1, -1):
+
+            used_bone = bone_list[pIdx]
+
+            q = self.get_rotation(effector, bone_positions[-1], bone_positions[pIdx], cum_rots[used_bone])
+
             print("Got rotation for bone %d(%s): %s"%(bone_list[pIdx], self.bonelist[bone_list[pIdx]], q))
+            #print("Got No-cumul for bone %d(%s): %s"%(bone_list[pIdx], self.bonelist[bone_list[pIdx]], q2))
             if (pIdx == len(bone_positions) - 2):
                 rots[pIdx] = q
             else:
@@ -224,12 +264,12 @@ class FKSolver:
             # Update the bone positions 
             for uIdx in range(pIdx + 1, len(bone_positions)):
 
-                print("Initial Bone Pos: %s -> %s"%(bone_positions[uIdx], bone_positions[pIdx]))
-                print("Initial Rotation: %s"%old_rotations[pIdx])
-                print("Additional Rotation: %s"%q)
-                print("Full rotation: %s"%(q * old_rotations[pIdx]))
+                print("%d: Initial Bone Pos: %s -> %s"%(uIdx, bone_positions[uIdx], bone_positions[pIdx]))
+                print("%d: Initial Rotation: %s"%(uIdx, old_rotations[pIdx]))
+                print("%d: Additional Rotation: %s"%(uIdx, q))
+                print("%d: Full rotation: %s"%(uIdx, q * old_rotations[pIdx]))
 
-                
+                cr = cum_rots[uIdx]
                 bone_positions[uIdx] = bone_positions[pIdx] + q.apply(bone_positions[uIdx] - bone_positions[pIdx])
                 # print("Bone pos update: %d: %s + Rot [%s] * (%s - %s) [%s] = %s"%
                 #       (uIdx,
@@ -240,10 +280,8 @@ class FKSolver:
                 #        pose[bone_list[uIdx]] - pose[bone_list[pIdx]],                       
                 #        bone_positions[uIdx]))
 
-                
-
-                
-                # for i, bpos in enumerate(bone_positions):
+            print("Post pass bone pos: ", [str(p) for p in bone_positions])
+            # for i, bpos in enumerate(bone_positions):
             #     print("Pass: %d, bone_positions: %d: %s"%(pIdx, i, bpos))
         print("Bone list is ", [b for b in bone_list])
         for i, b in enumerate(bone_list):
@@ -252,8 +290,6 @@ class FKSolver:
                                          str(pose[b]),
                                          str(bone_positions[i])))
         print("--")
-        # print("Original Bone track positions: ", [str(pose[i]) for i in bone_list])        
-        # print("Recalced Bone track positions: ", [str(p) for p in bone_positions])
             
         new_rotations = old_rotations.copy()
 
@@ -262,6 +298,7 @@ class FKSolver:
             # The bones here are being applied in the wrong order
             bu = bone_list[i]
             print("Adding rotation %s to bone %d(%s): %s"%(str(bp), bu, str(self.bonelist[bu]), new_rotations[bu]))
+            #new_rotations[bu] = bp * new_rotations[bu]
             new_rotations[bu] = bp * new_rotations[bu]
                 
         return new_rotations, old_rotations
@@ -380,12 +417,18 @@ for idx, pr in enumerate(prior_results):
     nr = runresults[idx]
     print("Rot: %s:\t%s\t->\t%s"%(body_34_parts[idx], str(pr), str(nr)))
 
+
 print("Recalced skel pivot bone pos: %s -> %s"%(npose[args.pivot_bone], str(pass1_pose[args.pivot_bone])))
 print("Recalced skel extreme bone pos: %s -> %s"%(npose[args.extreme_bone], str(pass1_pose[args.extreme_bone])))
 print("New Result size: %d"%len(runresults))
 
 
 parentslist = fksolver.parents
+
+
+for i, b in enumerate(body_34_parts):
+    print("Bone %d(%s): %s -> %s"%(i, b, old_pose[i], pass1_pose[i]))
+
 
 renderer = Render([apose, old_pose, pass1_pose], parentslist, nodots = args.nodots, lineplot = args.lineplot,
                   elev = args.elev,
