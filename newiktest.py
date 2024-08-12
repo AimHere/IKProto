@@ -1,5 +1,5 @@
 import argparse
-izemport math
+import math
 import numpy as np
 
 
@@ -12,6 +12,7 @@ from zed_utilities import body_34_parts, body_34_tree, body_34_tpose, ForwardKin
 from zed_utilities import Quaternion, Position
 
 zero_pose = [Quaternion([0, 0, 0, 1]) for u in range(34)]
+
 
 class Render:
     def __init__(self, skelList, parents, nodots = False, lineplot = True,
@@ -109,15 +110,20 @@ class Render:
                 liney.append([skel[cIdx, 1], skel[pIdx, 1]])                
                 linez.append([skel[cIdx, 2], skel[pIdx, 2]])
         return [linex, liney, linez]
-                    
-                                          
-class FKSolver:
 
-    def __init__(self, bonelist, bonetree, rootbone, tpose, rootpos = Position([0,0,0])):
+
+class CCDSolver:
+    def __init__(self, bonelist, bonetree, rootbone, rotations, keypoints, rootpos = Position([0,0,0])):
         self.bonetree = bonetree
         self.bonelist = bonelist
         self.root = rootbone
-        self.tpose = [Position(p) for p in tpose]
+        self.keypoints = keypoints
+        self.orig_rotations = rotations
+        
+        self.tpose = self.untarget(keypoints, rotations)
+
+        for i,b in enumerate(self.tpose):
+            print("%d(%s) : %s"%(i, self.bonelist[i], str(self.tpose[i])))
 
         self.parents = [-1 for i in self.bonelist]
 
@@ -127,8 +133,9 @@ class FKSolver:
                 cIdx = self.bonelist.index(cstr)
                 self.parents[cIdx] = pIdx
             
-        print(self.parents)
-
+        grots = self.get_global_rotations(self.orig_rotations)
+        print([str(q) for q in grots])
+        
     def untarget(self, keypoints, rotations, static = False):
         new_positions = [Position.zero()] * len(self.bonelist)
 
@@ -153,134 +160,31 @@ class FKSolver:
             self.rootpos = Position([0, 0, 0])
         return new_positions
 
-    def recalc_tpose(self, keypoints, rotations):
-        new_pos = self.untarget(keypoints, rotations)
-        return new_pos
-        
-    def bone_path(self, b_from, b_to):
-        
-        # Return the list of bones from the 'to' bone to the 'from' bone
-        bone_path = [b_to]
-        pIdx = self.parents[b_to]
-        
-        if (b_to == b_from):
-            pass # The bone has already been added?
+    def get_global_rotations(self, rotations):
+        out_rotations = []        
+        def _recurse(bone, c_rot, pIdx):
 
-        # We've hit the root bone. Now we have to append the reversed version
-        elif (pIdx == -1):
-            addendum = [i for i in self.bone_path(b_to, b_from)][:-1]
-            bone_path.extend(reversed(addendum))
-
-        else:
-            bone_path.extend(self.bone_path(b_from, pIdx))
             
-        return bone_path
+            cIdx = self.bonelist.index(bone)
 
-    def get_rotation(self, effector, effect_pos, pivot_pos):
-        # Find the angle from rotating r_joint that minimizes the distance between the effector and
-        # the position of e_joint
-
-        # Without constraints, this is equivalent to finding the nearest point
-        # to 'effector' on the sphere of radius | pos(r_joint) - pos(e_joint) |
-
-        # Constraints seem to be about finding specific axis and then clamping the rotations.
-        # I'm not convinced by this, yet
-
-
-        # First, find the quaternion that rotates between two given vectors
-
-        if (effector == effect_pos):
-            return Quaternion([0, 0, 0, 1]) # We're already there
-
-        target_vec = (effector - pivot_pos).norm()
-        cur_vec = (effect_pos - pivot_pos).norm()
-
-        axis_raw = cur_vec.cross(target_vec)
-        angle = math.atan2(axis_raw.mag(), target_vec.dot(cur_vec))
-        
-        axis_norm = axis_raw.norm()
-
-        shalf = math.sin(angle / 2)
-        chalf = math.cos(angle / 2)
-
-        ax_sc = axis_norm.scale(shalf)
-        q = Quaternion([ax_sc.x, ax_sc.y, ax_sc.z, chalf])
-        return q
-
-
-    def CCD_pass(self, effector, bone_list, pose, old_rotations):
-        bone_positions = [pose[i] for i in bone_list]
-
-        rots = [Quaternion.zero() for i in bone_positions]
-        
-        for pIdx in range(len(bone_positions) - 2, -1, -1):            
-            q = self.get_rotation(effector, bone_positions[-1], bone_positions[pIdx])
-            print("Got rotation for bone %d(%s): %s"%(bone_list[pIdx], self.bonelist[bone_list[pIdx]], q))
-            if (pIdx == len(bone_positions) - 2):
-                rots[pIdx] = q
+            if (pIdx < 0):
+                n_rot = c_rot
             else:
-                rots[pIdx] = q * rots[pIdx + 1]
+                n_rot = c_rot * rotations[pIdx]
+
+            out_rotations.append(n_rot)
+
+            for child in self.bonetree[bone]:
+                _recurse(child, n_rot, cIdx)
                 
-            # Update the bone positions 
-            for uIdx in range(pIdx + 1, len(bone_positions)):
+        initial_rot = rotations[self.bonelist.index(self.root)]
 
-                print("Initial Bone Pos: %s -> %s"%(bone_positions[uIdx], bone_positions[pIdx]))
-                print("Initial Rotation: %s"%old_rotations[pIdx])
-                print("Additional Rotation: %s"%q)
-                print("Full rotation: %s"%(q * old_rotations[pIdx]))
-               
-                bone_positions[uIdx] = bone_positions[pIdx] + q.apply(bone_positions[uIdx] - bone_positions[pIdx])
-                # print("Bone pos update: %d: %s + Rot [%s] * (%s - %s) [%s] = %s"%
-                #       (uIdx,
-                #        bone_positions[pIdx],
-                #        q,
-                #        pose[bone_list[uIdx]],
-                #        pose[bone_list[pIdx]],
-                #        pose[bone_list[uIdx]] - pose[bone_list[pIdx]],                       
-                #        bone_positions[uIdx]))
-                
-                # for i, bpos in enumerate(bone_positions):
-            #     print("Pass: %d, bone_positions: %d: %s"%(pIdx, i, bpos))
-        print("Bone list is ", [b for b in bone_list])
-        for i, b in enumerate(bone_list):
-            print("%d: %d (%s): %s->%s"%(i, b,
-                                         self.bonelist[b],
-                                         str(pose[b]),
-                                         str(bone_positions[i])))
-        print("--")
-        # print("Original Bone track positions: ", [str(pose[i]) for i in bone_list])        
-        # print("Recalced Bone track positions: ", [str(p) for p in bone_positions])
-            
-        new_rotations = old_rotations.copy()
-
-        # Rotations are cumulative 
-        for i, bp in enumerate(rots):
-            # The bones here are being applied in the wrong order
-            bu = bone_list[i]
-            print("Adding rotation %s to bone %d (%s): %s"%(str(bp), bu, str(self.bonelist[bu]), new_rotations[bu]))
-            new_rotations[bu] = bp * new_rotations[bu] 
-                
-        return new_rotations, old_rotations
-            
-    def CCD_run(self, effector, initial_pose, initial_rots, effector_bone, fixed_bone, max_iters = 100, threshold = None):
-        # Go through the bones getting the rotations and applying them to get the updated position of the
-        # extreme bone
-
-        # Once you have the list of rotations, apply them all to the skel and get the new pose positions
-        # Repeat until the threshold or max iters condition is hit
-
-        bone_path_ = self.bone_path(fixed_bone, effector_bone)
+        _recurse(self.root, initial_rot, -1)
         
-        bone_path = [b for b in reversed(bone_path_)]
+        return out_rotations
         
-        print("--")
-        print("Rev Bone path is ", [b for b in bone_path_])        
-        print("Bone path is ", [b for b in bone_path])
-        
-        new_rots, old_rots = self.CCD_pass(effector, bone_path, initial_pose, initial_rots)
-        
-        return new_rots, old_rots
 
+    
     def propagate(self, rotations, initial_position):
         keyvector = [Position([0, 0, 0]) for i in range(34)]
         
@@ -306,34 +210,72 @@ class FKSolver:
         
         return keyvector
 
-class CCD:
-    def __init__(self, skeleton, constraints = None):
-        self.skeleton = skeleton
-        self.constraints = constraints
-
-    def solve(self, effectors, static_bones, current_pose = None):
-        # Solve the ik problem, given the list of target effectors, and the list of bones that are static, and a given tpose
-        pass
-
-class FABRIK:
     
-    def __init__(self):
-        pass
+    def recalc_tpose(self, keypoints, rotations):
+        new_pos = self.untarget(keypoints, rotations)
+        return new_pos
+        
+    def bone_path(self, b_from, b_to):
+        bone_path = [b_to]
+        pIdx = self.parents[b_to]
 
-    def solve(self, effectors, static_bones, current_pose = None):
-        # Solve the ik problem, given the list of target effectors, and the list of bones that are static, and a given tpose
-        pass
+        if (b_to != b_from):
+            if (pIdx == -1):
+                addendum = [i for i in self.bone_path(b_to, b_from)][:-1]
+                bone_path.extend(reversed(addendum))
+            else:
+                bone_path.extend(self.bone_path(b_from, pIdx))
 
 
+    def rot_towards_test(self, effector, pivot_bone, end_bone):
+        current_rotation = self.orig_rotations[pivot_bone]
 
 
+        new_rotations = self.orig_rotations.copy()
+        #new_rotations[pivot_bone] = rot_diff
+
+        glob_rots = self.get_global_rotations(self.orig_rotations)
+
+        old_globrot = glob_rots[pivot_bone]
+        
+        rot_diff = self.rotate_towards(effector, pivot_bone, end_bone, prerot = old_globrot)
+        new_rotations[pivot_bone] = old_globrot.inv() * rot_diff * new_rotations[pivot_bone]# * old_globrot
+        return new_rotations
+        
+        
+    def rotate_towards(self, effector, pivot_bone, end_bone, prerot = Quaternion([0,0,0,1])):
+        # Returns the new rotation value that moves the end bone as close to the effector as possible
+
+        pivot = self.keypoints[pivot_bone]
+        end_pt = self.keypoints[end_bone]
+        effect_pt = Position(effector)
+        
+        # target_vector = Position(effector) - self.keypoints[pivot_bone]
+        # current_vector = self.keypoints[end_bone] - self.keypoints[pivot_bone]
+        target_vector = prerot.inv().apply(effect_pt - pivot)
+        current_vector = prerot.inv().apply(end_pt - pivot)
+
+        print("Vecs: %s, %s"%(str(target_vector), str(current_vector)))
+
+        axis_raw = current_vector.cross(target_vector)
+        axis_norm = axis_raw.norm()
+        angle = math.atan2(axis_raw.mag(), target_vector.dot(current_vector))
+        
+        shalf = math.sin(angle / 2)
+        chalf = math.cos(angle / 2)
+        ax_sc = axis_norm.scale(shalf)
+        q = prerot * Quaternion([ax_sc.x, ax_sc.y, ax_sc.z, chalf])
+        print("Difference : %s"%str(q))
+
+
+        test_pt = pivot + q.apply(end_pt - pivot)
+        print("Pivot: %s move target from %s to %s to reach %s"%(pivot, end_pt, test_pt, effect_pt))
+        return q
+
+
+        
     
-import argparse
-
 parser = argparse.ArgumentParser()
-
-# parser.add_argument('f', type = int)
-# parser.add_argument('to', type = int)
 
 parser.add_argument("--nodots", action = 'store_true', help = "Line only, no dots")
 parser.add_argument("--save", type = str, help = "Save to file")
@@ -348,7 +290,7 @@ parser.add_argument('frame', type = int)
 parser.add_argument('pivot_bone', type = int)
 parser.add_argument('extreme_bone', type = int)
 parser.add_argument('effector', type = float, nargs = 3)
-    
+
 args = parser.parse_args()
 
 effector = Position(args.effector)
@@ -358,41 +300,28 @@ pose_kps = np.load("S9_posing_1_zed34_test.npz", allow_pickle = True)['keypoints
 
 fkn = ForwardKinematics(body_34_parts, body_34_tree, 'PELVIS', body_34_tpose)
 
-pquats = [Quaternion(pose_rots[i]) for i in range(pose_rots.shape[0])]
-ppos = [Position(pose_kps[i]) for i in range(pose_kps.shape[0])]
+q_rots = [Quaternion(pose_rots[i]) for i in range(pose_rots.shape[0])]
+p_poses = fkn.propagate(q_rots, Position.zero())
 
-fksolver = FKSolver(body_34_parts, body_34_tree, 'PELVIS', body_34_tpose)
-npose = fksolver.propagate(pquats, Position([0, 0, 0]))
+iksolver = CCDSolver(body_34_parts, body_34_tree, 'PELVIS', q_rots, p_poses)
 
-print("Pivot from %s(%d) to extremity %s(%d)"%(body_34_parts[args.pivot_bone], args.pivot_bone, body_34_parts[args.extreme_bone], args.extreme_bone))
+# r_tpose = np.array([p.np() for p in fksolver.recalc_tpose(ppos, pquats)])
+iksolver.rotate_towards(args.effector, args.pivot_bone, args.extreme_bone)
 
-tpose = np.array(body_34_tpose)
-apose = np.array([p.np() for p in ppos])
-#npose = np.array([p.np() for p in fksolver.recalc_tpose(ppos, pquats)])
+test_rotations  = iksolver.rot_towards_test (args.effector, args.pivot_bone, args.extreme_bone)
 
-runresults, prior_results = fksolver.CCD_run(effector, npose, pquats, args.extreme_bone, args.pivot_bone)
-pass1_pose = np.array([p.np() for p in fkn.propagate(runresults, Position.zero())])
-pass0_pose = np.array([p.np() for p in fkn.propagate(prior_results, Position.zero())])
+new_poses = fkn.propagate(test_rotations, Position.zero())
 
+rlist = [iksolver.tpose, p_poses, new_poses]
 
-for idx, pr in enumerate(prior_results):
-    nr = runresults[idx]
-    print("Rot: %s:\t%s\t->\t%s"%(body_34_parts[idx], str(pr), str(nr)))
-
-print("Recalced skel pivot bone pos: %s -> %s"%(npose[args.pivot_bone], str(pass1_pose[args.pivot_bone])))
-print("Recalced skel extreme bone pos: %s -> %s"%(npose[args.extreme_bone], str(pass1_pose[args.extreme_bone])))
-print("New Result size: %d"%len(runresults))
+renderlist = [np.array([p.np() for p in pose]) for pose in rlist]
 
 
-for b in range(len(pass0_pose)):
-    print("Bone %d (%s): %s -> %s"%(b, body_34_parts[b], pass0_pose[b], pass1_pose[b]))
 
-parentslist = fksolver.parents
 
-#renderlist = [apose, pass0_pose, pass1_pose]
-renderlist = [tpose]
 
-renderer = Render(renderlist, parentslist, nodots = args.nodots,
+renderer = Render(renderlist,
+                  iksolver.parents,
                   lineplot = args.lineplot,
                   elev = args.elev,
                   azim = args.azim,
@@ -402,4 +331,5 @@ renderer = Render(renderlist, parentslist, nodots = args.nodots,
                   static_bone = args.pivot_bone,
                   extreme_bone = args.extreme_bone,
                   effector = args.effector)
+                  
 
