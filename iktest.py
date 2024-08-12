@@ -310,14 +310,9 @@ class FKSolver:
         for i, bp in enumerate(rots):
             # The bones here are being applied in the wrong order
             bu = bone_list[i]
-<<<<<<< HEAD
-            print("Adding rotation %s to bone %d (%s): %s"%(str(bp), bu, str(self.bonelist[bu]), new_rotations[bu]))
-            new_rotations[bu] = bp * new_rotations[bu] 
-=======
             print("Adding rotation %s to bone %d(%s): %s"%(str(bp), bu, str(self.bonelist[bu]), new_rotations[bu]))
             #new_rotations[bu] = bp * new_rotations[bu]
             new_rotations[bu] = bp * new_rotations[bu]
->>>>>>> 0a25749da5878944ab907e4e0470b163caae80d1
                 
         return new_rotations, old_rotations
             

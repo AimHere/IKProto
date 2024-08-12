@@ -13,6 +13,13 @@ from zed_utilities import Quaternion, Position
 
 zero_pose = [Quaternion([0, 0, 0, 1]) for u in range(34)]
 
+def sign(a):
+    if (a > 0):
+        return 1
+    if (a < 0):
+        return -1
+    return 0
+
 
 class Render:
     def __init__(self, skelList, parents, nodots = False, lineplot = True,
@@ -161,10 +168,9 @@ class CCDSolver:
         return new_positions
 
     def get_global_rotations(self, rotations):
+
         out_rotations = []        
         def _recurse(bone, c_rot, pIdx):
-
-            
             cIdx = self.bonelist.index(bone)
 
             if (pIdx < 0):
@@ -218,42 +224,39 @@ class CCDSolver:
     def bone_path(self, b_from, b_to):
         bone_path = [b_to]
         pIdx = self.parents[b_to]
-
+        
         if (b_to != b_from):
             if (pIdx == -1):
                 addendum = [i for i in self.bone_path(b_to, b_from)][:-1]
                 bone_path.extend(reversed(addendum))
             else:
                 bone_path.extend(self.bone_path(b_from, pIdx))
-
+        return bone_path
 
     def rot_towards_test(self, effector, pivot_bone, end_bone):
-        current_rotation = self.orig_rotations[pivot_bone]
-
 
         new_rotations = self.orig_rotations.copy()
-        #new_rotations[pivot_bone] = rot_diff
-
         glob_rots = self.get_global_rotations(self.orig_rotations)
 
-        old_globrot = glob_rots[pivot_bone]
+        old_globrot = glob_rots[self.parents[pivot_bone]]
         
-        rot_diff = self.rotate_towards(effector, pivot_bone, end_bone, prerot = old_globrot)
-        new_rotations[pivot_bone] = old_globrot.inv() * rot_diff * new_rotations[pivot_bone]# * old_globrot
+        rot_diff = self.rotate_towards(effector, pivot_bone, end_bone)
+        new_rotations[pivot_bone] = old_globrot * rot_diff * old_globrot.inv() * new_rotations[pivot_bone]
         return new_rotations
         
         
-    def rotate_towards(self, effector, pivot_bone, end_bone, prerot = Quaternion([0,0,0,1])):
+    def rotate_towards(self, effector, pivot_bone, end_bone, keypoints = None):
         # Returns the new rotation value that moves the end bone as close to the effector as possible
 
-        pivot = self.keypoints[pivot_bone]
-        end_pt = self.keypoints[end_bone]
-        effect_pt = Position(effector)
+        if (keypoints is None):
+            keypoints = self.keypoints
         
-        # target_vector = Position(effector) - self.keypoints[pivot_bone]
-        # current_vector = self.keypoints[end_bone] - self.keypoints[pivot_bone]
-        target_vector = prerot.inv().apply(effect_pt - pivot)
-        current_vector = prerot.inv().apply(end_pt - pivot)
+        pivot = keypoints[pivot_bone]
+        end_pt = keypoints[end_bone]
+        effect_pt = Position(effector)
+
+        target_vector = (effect_pt - pivot)
+        current_vector = (end_pt - pivot)
 
         print("Vecs: %s, %s"%(str(target_vector), str(current_vector)))
 
@@ -264,17 +267,35 @@ class CCDSolver:
         shalf = math.sin(angle / 2)
         chalf = math.cos(angle / 2)
         ax_sc = axis_norm.scale(shalf)
-        q = prerot * Quaternion([ax_sc.x, ax_sc.y, ax_sc.z, chalf])
+        q = Quaternion([ax_sc.x, ax_sc.y, ax_sc.z, chalf])
         print("Difference : %s"%str(q))
 
 
         test_pt = pivot + q.apply(end_pt - pivot)
-        print("Pivot: %s move target from %s to %s to reach %s"%(pivot, end_pt, test_pt, effect_pt))
+
+        print("Test: Moving %s to %s to get closer to %s"%(str(end_pt), str(test_pt), str(effector)))
         return q
 
+    def CCD_pass(self, effector, pivot_bone, end_bone, piv_to_end = True):
+        # We can pivot in any order, the obvious two are end-to-pivot and pivot-to-end
 
-        
-    
+        bone_path = self.bone_path(pivot_bone, end_bone)[1:]
+        if (piv_to_end):
+            bone_path = [p for p in reversed(bone_path)]
+
+        rotations = self.orig_rotations.copy()
+
+        for b in bone_path:
+            glob_rots = self.get_global_rotations(rotations)
+            print("Pass on bone %d"%b)
+            old_globrot = glob_rots[self.parents[b]]
+            keypoints = self.propagate(rotations, Position([0,0,0]))
+            
+            rot_diff = self.rotate_towards(effector, b, end_bone, keypoints = keypoints)
+            rotations[b] = old_globrot * rot_diff * old_globrot.inv() * rotations[b]
+            
+        return rotations
+            
 parser = argparse.ArgumentParser()
 
 parser.add_argument("--nodots", action = 'store_true', help = "Line only, no dots")
@@ -312,13 +333,16 @@ test_rotations  = iksolver.rot_towards_test (args.effector, args.pivot_bone, arg
 
 new_poses = fkn.propagate(test_rotations, Position.zero())
 
-rlist = [iksolver.tpose, p_poses, new_poses]
+test_rots2 = iksolver.CCD_pass(args.effector, args.pivot_bone, args.extreme_bone, piv_to_end = True)
+
+for i, q in enumerate(q_rots):
+    print("%s (%d): %s vs %s"%(body_34_parts[i], i, q, test_rots2[i]))
+
+new_poses2 = fkn.propagate(test_rots2, Position.zero())
+
+rlist = [p_poses, new_poses, new_poses2]
 
 renderlist = [np.array([p.np() for p in pose]) for pose in rlist]
-
-
-
-
 
 renderer = Render(renderlist,
                   iksolver.parents,
