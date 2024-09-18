@@ -295,65 +295,71 @@ class CCDSolver:
             rotations[b] = old_globrot * rot_diff * old_globrot.inv() * rotations[b]
             
         return rotations
-            
-parser = argparse.ArgumentParser()
 
-parser.add_argument("--nodots", action = 'store_true', help = "Line only, no dots")
-parser.add_argument("--save", type = str, help = "Save to file")
-parser.add_argument("--elev", type = float, help = "Elevation", default = 0)
-parser.add_argument("--azim", type = float, help = "Azimuth", default = 0)
-parser.add_argument("--roll", type = float, help = "Roll", default = 0)
-parser.add_argument("--lineplot", action = 'store_true', help = "Draw a skel")
-parser.add_argument("--scale", type = int, help = "Scaling factor", default = 1000.0)
-parser.add_argument("--figsize", type = int, nargs = 2, help = "Figure size in pixels", default = (1600, 800))
 
-parser.add_argument('frame', type = int)
-parser.add_argument('pivot_bone', type = int)
-parser.add_argument('extreme_bone', type = int)
-parser.add_argument('effector', type = float, nargs = 3)
+if (__name__ == '__main__'): 
+    
+    parser = argparse.ArgumentParser()
+    
+    parser.add_argument("--nodots", action = 'store_true', help = "Line only, no dots")
+    parser.add_argument("--save", type = str, help = "Save to file")
+    parser.add_argument("--elev", type = float, help = "Elevation", default = 0)
+    parser.add_argument("--azim", type = float, help = "Azimuth", default = 0)
+    parser.add_argument("--roll", type = float, help = "Roll", default = 0)
+    parser.add_argument("--lineplot", action = 'store_true', help = "Draw a skel")
+    parser.add_argument("--scale", type = int, help = "Scaling factor", default = 1000.0)
+    parser.add_argument("--figsize", type = int, nargs = 2, help = "Figure size in pixels", default = (1600, 800))
+    
+    parser.add_argument('frame', type = int)
+    parser.add_argument('pivot_bone', type = int)
+    parser.add_argument('extreme_bone', type = int)
+    parser.add_argument('effector', type = float, nargs = 3)
+    
+    args = parser.parse_args()
+    
+    effector = Position(args.effector)
+    
+    pose_rots = np.load("S9_posing_1_zed34_test.npz", allow_pickle = True)['quats'][args.frame, :, :]
+    pose_kps = np.load("S9_posing_1_zed34_test.npz", allow_pickle = True)['keypoints'][args.frame, :, :]
+        
+    fkn = ForwardKinematics(body_34_parts, body_34_tree, 'PELVIS', body_34_tpose)
+    q_rots = [Quaternion(pose_rots[i]) for i in range(pose_rots.shape[0])]
+    print("Q_rots: ", q_rots)
+        
+    p_poses = fkn.propagate(q_rots, Position.zero())
 
-args = parser.parse_args()
-
-effector = Position(args.effector)
-
-pose_rots = np.load("S9_posing_1_zed34_test.npz", allow_pickle = True)['quats'][args.frame, :, :]
-pose_kps = np.load("S9_posing_1_zed34_test.npz", allow_pickle = True)['keypoints'][args.frame, :, :]
-
-fkn = ForwardKinematics(body_34_parts, body_34_tree, 'PELVIS', body_34_tpose)
-
-q_rots = [Quaternion(pose_rots[i]) for i in range(pose_rots.shape[0])]
-p_poses = fkn.propagate(q_rots, Position.zero())
-
-iksolver = CCDSolver(body_34_parts, body_34_tree, 'PELVIS', q_rots, p_poses)
-
-# r_tpose = np.array([p.np() for p in fksolver.recalc_tpose(ppos, pquats)])
-iksolver.rotate_towards(args.effector, args.pivot_bone, args.extreme_bone)
-
-test_rotations  = iksolver.rot_towards_test (args.effector, args.pivot_bone, args.extreme_bone)
-
-new_poses = fkn.propagate(test_rotations, Position.zero())
-
-test_rots2 = iksolver.CCD_pass(args.effector, args.pivot_bone, args.extreme_bone, piv_to_end = True)
-
-for i, q in enumerate(q_rots):
-    print("%s (%d): %s vs %s"%(body_34_parts[i], i, q, test_rots2[i]))
-
-new_poses2 = fkn.propagate(test_rots2, Position.zero())
-
-rlist = [p_poses, new_poses, new_poses2]
-
-renderlist = [np.array([p.np() for p in pose]) for pose in rlist]
-
-renderer = Render(renderlist,
-                  iksolver.parents,
-                  lineplot = args.lineplot,
-                  elev = args.elev,
-                  azim = args.azim,
-                  roll = args.roll,
-                  figsize = args.figsize,
-                  scale = args.scale,
-                  static_bone = args.pivot_bone,
-                  extreme_bone = args.extreme_bone,
-                  effector = args.effector)
-                  
-
+    
+    iksolver = CCDSolver(body_34_parts, body_34_tree, 'PELVIS', q_rots, p_poses)
+    
+    # r_tpose = np.array([p.np() for p in fksolver.recalc_tpose(ppos, pquats)])
+    iksolver.rotate_towards(args.effector, args.pivot_bone, args.extreme_bone)
+    
+    test_rotations  = iksolver.rot_towards_test(args.effector, args.pivot_bone, args.extreme_bone)
+    
+    new_poses = fkn.propagate(test_rotations, Position.zero())
+    
+    test_rots2 = iksolver.CCD_pass(args.effector, args.pivot_bone, args.extreme_bone, piv_to_end = True)
+    
+    for i, q in enumerate(q_rots):
+        print("%s (%d): %s vs %s"%(body_34_parts[i], i, q, test_rots2[i]))
+    
+    new_poses2 = fkn.propagate(test_rots2, Position.zero())
+    
+    rlist = [p_poses, new_poses, new_poses2]
+    
+    renderlist = [np.array([p.np() for p in pose]) for pose in rlist]
+    
+    renderer = Render(renderlist,
+                      iksolver.parents,
+                      lineplot = args.lineplot,
+                      elev = args.elev,
+                      azim = args.azim,
+                      roll = args.roll,
+                      figsize = args.figsize,
+                      scale = args.scale,
+                      static_bone = args.pivot_bone,
+                      extreme_bone = args.extreme_bone,
+                      effector = args.effector)
+    
+    
+    

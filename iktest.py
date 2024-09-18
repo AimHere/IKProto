@@ -1,5 +1,5 @@
 import argparse
-izemport math
+import math
 import numpy as np
 
 
@@ -264,20 +264,13 @@ class FKSolver:
             # Update the bone positions 
             for uIdx in range(pIdx + 1, len(bone_positions)):
 
-<<<<<<< HEAD
-                print("Initial Bone Pos: %s -> %s"%(bone_positions[uIdx], bone_positions[pIdx]))
-                print("Initial Rotation: %s"%old_rotations[pIdx])
-                print("Additional Rotation: %s"%q)
-                print("Full rotation: %s"%(q * old_rotations[pIdx]))
-               
-=======
                 print("%d: Initial Bone Pos: %s -> %s"%(uIdx, bone_positions[uIdx], bone_positions[pIdx]))
                 print("%d: Initial Rotation: %s"%(uIdx, old_rotations[pIdx]))
                 print("%d: Additional Rotation: %s"%(uIdx, q))
                 print("%d: Full rotation: %s"%(uIdx, q * old_rotations[pIdx]))
 
                 cr = cum_rots[uIdx]
->>>>>>> 0a25749da5878944ab907e4e0470b163caae80d1
+
                 bone_positions[uIdx] = bone_positions[pIdx] + q.apply(bone_positions[uIdx] - bone_positions[pIdx])
                 # print("Bone pos update: %d: %s + Rot [%s] * (%s - %s) [%s] = %s"%
                 #       (uIdx,
@@ -287,15 +280,8 @@ class FKSolver:
                 #        pose[bone_list[pIdx]],
                 #        pose[bone_list[uIdx]] - pose[bone_list[pIdx]],                       
                 #        bone_positions[uIdx]))
-<<<<<<< HEAD
-                
-                # for i, bpos in enumerate(bone_positions):
-=======
 
-            print("Post pass bone pos: ", [str(p) for p in bone_positions])
-            # for i, bpos in enumerate(bone_positions):
->>>>>>> 0a25749da5878944ab907e4e0470b163caae80d1
-            #     print("Pass: %d, bone_positions: %d: %s"%(pIdx, i, bpos))
+
         print("Bone list is ", [b for b in bone_list])
         for i, b in enumerate(bone_list):
             print("%d: %d (%s): %s->%s"%(i, b,
@@ -444,8 +430,8 @@ for b in range(len(pass0_pose)):
 
 parentslist = fksolver.parents
 
-#renderlist = [apose, pass0_pose, pass1_pose]
-renderlist = [tpose]
+renderlist = [apose, pass0_pose, pass1_pose]
+#renderlist = [tpose]
 
 renderer = Render(renderlist, parentslist, nodots = args.nodots,
                   lineplot = args.lineplot,

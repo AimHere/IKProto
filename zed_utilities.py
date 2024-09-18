@@ -666,45 +666,44 @@ class ForwardKinematics:
         return keyvector
 
 
-if (torchfound):
-    class ForwardKinematics_Torch:
+class ForwardKinematics_Torch:
 
-        def __init__(self, bonelist, bonetree, rootbone, tpose, rootpose = torch.tensor([0, 0, 0])):
-            self.bonelist = bonelist
-            self.bonetree = bonetree
-            self.root = rootbone
-            self.tpose = torch.tensor(tpose).cuda()
+    def __init__(self, bonelist, bonetree, rootbone, tpose, rootpose = torch.tensor([0, 0, 0])):
+        self.bonelist = bonelist
+        self.bonetree = bonetree
+        self.root = rootbone
+        self.tpose = torch.tensor(tpose).cuda()
 
 
-        def propagate(self, rotations, initial_position = None):
+    def propagate(self, rotations, initial_position = None):
 
-            if (initial_position):
-                ipos = initial_position
+        if (initial_position):
+            ipos = initial_position
+        else:
+            ipos = torch.zeros([3])
+
+        key_tensor = torch.zeros([rotations.shape[0], rotations.shape[1], rotations.shape[2], 3]).cuda()
+        def _recurse(parentbone, cur_rot, pIdx):
+
+            cIdx = self.bonelist.index(parentbone)
+
+            if pIdx < 0:
+                new_rot = cur_rot.clone()
+                new_pos = ipos.clone()
             else:
-                ipos = torch.zeros([3])
+                new_rot = batch_quat_multiply(cur_rot, rotations[:, :, pIdx:pIdx + 1, :])
+                brv = batch_rotate_vector(new_rot, pIdx, self.tpose[cIdx] - self.tpose[pIdx])
+                new_pos = key_tensor[:, :, pIdx:pIdx + 1, :] + brv
 
-            key_tensor = torch.zeros([rotations.shape[0], rotations.shape[1], rotations.shape[2], 3]).cuda()
-            def _recurse(parentbone, cur_rot, pIdx):
+            key_tensor[:, :, cIdx:cIdx + 1, :] = new_pos
 
-                cIdx = self.bonelist.index(parentbone)
+            for child in self.bonetree[parentbone]:
+                _recurse(child, new_rot, cIdx)
 
-                if pIdx < 0:
-                    new_rot = cur_rot.clone()
-                    new_pos = ipos.clone()
-                else:
-                    new_rot = batch_quat_multiply(cur_rot, rotations[:, :, pIdx:pIdx + 1, :])
-                    brv = batch_rotate_vector(new_rot, pIdx, self.tpose[cIdx] - self.tpose[pIdx])
-                    new_pos = key_tensor[:, :, pIdx:pIdx + 1, :] + brv
-
-                key_tensor[:, :, cIdx:cIdx + 1, :] = new_pos
-
-                for child in self.bonetree[parentbone]:
-                    _recurse(child, new_rot, cIdx)
-
-            iidx = self.bonelist.index(self.root)
-            initial_rot = rotations[:, :, iidx:iidx + 1, :]
-            _recurse(self.root, initial_rot, -1)
-            return key_tensor
+        iidx = self.bonelist.index(self.root)
+        initial_rot = rotations[:, :, iidx:iidx + 1, :]
+        _recurse(self.root, initial_rot, -1)
+        return key_tensor
         
 
 def normalize(v):
@@ -806,7 +805,6 @@ if (False):
 #from zed_utilities import ForwardKinematics, ForwardKinematics_Torch, old_rotate_vector, batch_rotate_vector, test_v_np, test_v_torch, test_quat_torch, test_axis1, test_theta1, test_axis2, test_theta2, test_quat1_np, test_quat2_np, fktorch, quats_torch, Position, test_kps, body_34_parts, body_34_tree, fk
 
 if __name__ == '__main__':
-    
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--save_npz", type = str)
@@ -830,7 +828,6 @@ if __name__ == '__main__':
     oframe = args.frame
     
     quats_torch = torch.unsqueeze(torch.tensor(npquat), dim = 0).float()[:, oframe:oframe + 1, :, :].cuda()
-    print(quats_torch.shape)
     kp_torch = fkt.propagate(quats_torch).cuda()
 
     framelist = []
