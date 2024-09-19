@@ -327,15 +327,12 @@ if (__name__ == '__main__'):
     print("Q_rots: ", q_rots)
         
     p_poses = fkn.propagate(q_rots, Position.zero())
-
-    
     iksolver = CCDSolver(body_34_parts, body_34_tree, 'PELVIS', q_rots, p_poses)
     
     # r_tpose = np.array([p.np() for p in fksolver.recalc_tpose(ppos, pquats)])
     iksolver.rotate_towards(args.effector, args.pivot_bone, args.extreme_bone)
     
     test_rotations  = iksolver.rot_towards_test(args.effector, args.pivot_bone, args.extreme_bone)
-    
     new_poses = fkn.propagate(test_rotations, Position.zero())
     
     test_rots2 = iksolver.CCD_pass(args.effector, args.pivot_bone, args.extreme_bone, piv_to_end = True)
