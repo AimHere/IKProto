@@ -124,35 +124,35 @@ for m in ldata:
     print("%s: %s"%(m, str(ldata[m])))
 
 #    fkt = ForwardKinematics_Torch(body_34_parts, body_34_tree, 'PELVIS', body_34_tpose)
-    fkn = ForwardKinematics(body_34_parts, body_34_tree, 'PELVIS', body_34_tpose)
+fkn = ForwardKinematics(body_34_parts, body_34_tree, 'PELVIS', body_34_tpose)
 
-    q_rots = [Quaternion([0,0,0,1]) for q in range(34)]
-    for i, b in enumerate(BONES_34_COMPACT):
-        q_rots[b] = ldata['pre-pass rotations'].quats[i]
+q_rots = [Quaternion([0,0,0,1]) for q in range(34)]
+for i, b in enumerate(BONES_34_COMPACT):
+    q_rots[b] = ldata['pre-pass rotations'].quats[i]
         
-    q_poses = ldata['pre-pass keypoints'].vecs
-    p_poses = fkn.propagate(q_rots, Position.zero())
-    problem = ldata['Effector position:']
+q_poses = ldata['pre-pass keypoints'].vecs
+p_poses = fkn.propagate(q_rots, Position.zero())
+problem = ldata['Effector position:']
+
+iksolver = CCDSolver(body_34_parts, body_34_tree, 'PELVIS', q_rots, p_poses)
+
+test_rotations = iksolver.CCD_pass(problem.effector, problem.pivot_bone, problem.end_bone, piv_to_end = True)
+new_poses = fkn.propagate(test_rotations, Position.zero())
     
-    iksolver = CCDSolver(body_34_parts, body_34_tree, 'PELVIS', q_rots, p_poses)
+rlist = [p_poses, new_poses]
 
-    test_rotations = iksolver.CCD_pass(problem.effector, problem.pivot_bone, problem.end_bone, piv_to_end = True)
-    new_poses = fkn.propagate(test_rotations, Position.zero())
-    
-    rlist = [p_poses, new_poses]
+renderlist = [np.array([p.np() for p in pose]) for pose in rlist]
 
-    renderlist = [np.array([p.np() for p in pose]) for pose in rlist]
-
-    renderer = Render(renderlist,
-                      iksolver.parents,
-                      lineplot = args.lineplot,
-                      elev = args.elev,
-                      azim = args.azim,
-                      roll = args.roll,
-                      figsize = args.figsize,
-                      scale = args.scale,
-                      static_bone = problem.pivot_bone,
-                      extreme_bone = problem.end_bone,
-                      effector = problem.effector)
+renderer = Render(renderlist,
+                  iksolver.parents,
+                  lineplot = args.lineplot,
+                  elev = args.elev,
+                  azim = args.azim,
+                  roll = args.roll,
+                  figsize = args.figsize,
+                  scale = args.scale,
+                  static_bone = problem.pivot_bone,
+                  extreme_bone = problem.end_bone,
+                  effector = problem.effector)
     
 
